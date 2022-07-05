@@ -14,6 +14,13 @@ Firstly a replicator network and its activity matrix are given, then the populat
 
 `PrebioDivEvo` is a simulation for determining how compartmentalized replication systems evolved.
 
+In these simulations, the concentrations of replicators in each compatment are defined as a type `Lives`. 
+The entity of this type is `std::vector<double>`.
+And, the activities of replications are defined as a type `Act`.
+The entity of this type is `std::vector<std::vector<double>>`, then a matrix.
+
+The entity of simulation process is a class `World`. For simulation, environmental parameters are unified as a class `Env`.
+
 ## Dependency
 
 To use these simulations, `openmp` and `boost` must be installed in environment.
