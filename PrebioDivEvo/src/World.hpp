@@ -85,7 +85,7 @@ int World::chronicle() {
             );
             // detection empty fusion
             for (int l=0; l<env_.L; l++) {
-                if (fd[l] > 0.0) {
+                if (fused[l] > 0.0) {
                     std::binomial_distribution<> binomial((int)fused[l], 0.5);
                     int oneside = binomial(engine);
                     
