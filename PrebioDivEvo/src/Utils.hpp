@@ -42,6 +42,12 @@ vector<vector<int>> fusdiv_mapper(int C, int size) {
     return fusdived;
 }
 
+vector<int> where_more(vector<int> vec, int c) {
+    vector<int> index;
+    for (int i; i<vec.size(); i++) { if (vec[i] > c) { index.push_back(i); }}
+    return index;
+}
+
 string get_time_str() {
     string mtime;
     struct timespec ts;
