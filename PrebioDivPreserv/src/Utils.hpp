@@ -25,12 +25,14 @@ vector<int> range(int size) {
     return vec;
 }
 
-vector<int> selection_mapper(int C, int size, std::mt19937& engine) {
+vector<int> selection_mapper(int C, int size) {
+    std::mt19937 engine = PDS::create_rand_engine();
     vector<int> selected = PDS::make_rand_array(size, 0, C-1, engine);
     return selected;
 }
 
-vector<vector<int>> fusdiv_mapper(int C, int size, std::mt19937& engine) {
+vector<vector<int>> fusdiv_mapper(int C, int size) {
+    std::mt19937 engine = PDS::create_rand_engine();
     vector<vector<int>> fusdived = {};
     for (int s=0; s<size; s++) {
         vector<int> fd = PDS::make_rand_array(2, 0, C-1, engine);
@@ -38,6 +40,12 @@ vector<vector<int>> fusdiv_mapper(int C, int size, std::mt19937& engine) {
     }
     
     return fusdived;
+}
+
+vector<int> where_more(vector<int> vec, int c) {
+    vector<int> index;
+    for (int i; i<vec.size(); i++) { if (vec[i] > c) { index.push_back(i); }}
+    return index;
 }
 
 string get_time_str() {
@@ -72,7 +80,6 @@ string random_code_generator(int length) {
     return code;
 }
 
-
 // DEBUG functions
 void debug_selection(int R, vector<vector<int>> killed) {
     for (int rd=0; rd<R; rd++) {
@@ -94,6 +101,39 @@ void debug_fusion_division(int R, vector<vector<vector<int>>> fusdived) {
             std::cout << "{" << fd[0] << " " << fd[1] << "}";
     } std::cout << std::endl; 
 }  } // func debug_fusion_division
+
+
+double activity_sampler(
+    std::uniform_real_distribution<double> khs,
+    std::uniform_real_distribution<double> kps,
+    int label_replicated, int replicating_label
+) {
+    std::mt19937 engine = PDS::create_rand_engine();
+    switch (label_replicated) {
+        case 0:
+            return 0.0;
+        case 1:
+            switch (replicating_label) {
+                case 0:
+                    return 0.0;
+                case 1:
+                    return khs(engine);
+                case 2:
+                    return 0.0;
+            }
+        case 2:
+            switch (replicating_label) {
+                case 0:
+                    return 0.0;
+                case 1:
+                    return kps(engine);
+                case 2:
+                    return 0.0;
+            }
+    }
+
+    return 0.0;
+}
 
 
 } // namespce PDS

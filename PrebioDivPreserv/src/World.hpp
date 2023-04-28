@@ -4,188 +4,285 @@
 #include "Utils.hpp"
 #include "Types.hpp"
 #include "Rep.hpp"
+#include "Sample.hpp"
 
 #include <random>
 #include <boost/numeric/odeint.hpp>
 #include <omp.h>
 using namespace boost::numeric::odeint;
-// for JSON of config data
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/foreach.hpp>
-#include <boost/optional.hpp>
-using namespace boost::property_tree;
-#include <stdio.h>
-#include <fstream>
-
-
-Lives replication(Lives clives, Act act, double N, int L) {
-    Lives vec = clives;
-    // Replication & Runge-Kutta system
-    runge_kutta4<Lives> RK4;
-    Replication rep(act, N, L);
-
-    boost::numeric::odeint::integrate_const(
-        RK4, rep, vec, 0.0, 15.0, 0.01
-    );
-
-    return vec;
-}
 
 
 class World {
 public:
     string id_;
-    const Env env_; const Act act_;
+    Env env_;
 public:
-    vector<Lives> lives; LivesRec rec;
-public:
-    World(Env e, Act a): id_("TEST"), env_(e), act_(a) {};
-    World(string i, Env e, Act a): id_(i), env_(e), act_(a) {};
-    void set_ID(string i) { id_ = i; };
-    int chronicle(); // main process
-    void save_env();
-    void save_act();
+    World(string i, Env e): id_(i), env_(e) {};
+    int chronicle();
 };
 
 int World::chronicle() {
+    env_.save();
     // lives setting
-    lives = vector<Lives>(env_.C, env_.init_lives);
-    // recorder
-    rec = LivesRec(env_.C, env_.L);
-    // recording initial conc
-    rec.record(lives);
+    Live lives(env_.C_, env_.L_);
+    lives.filled(env_.init_live_);
+    // act matrix setting
+    Act acts(env_.L_);
+    acts.update(env_.init_act_);
+    // lineage label setting
+    LineageLabel lineages(env_.L_);
+    lineages.update(env_.init_lineage_);
 
-    // the num of host lineages
-    int host_num = env_.index_host.size();
+    // output filestream
+    ofstream live_ofs("./results/pops/"+env_.id_+".csv");
+    ofstream acts_ofs("./results/acts/"+env_.id_+".csv");
+    ofstream lins_ofs("./results/lins/"+env_.id_+".csv");
+
+    // saving initial condition
+    lives.save(&live_ofs); acts.save(&acts_ofs); lives.save(&live_ofs);
 
     // random generator setting
     std::mt19937 engine = PDS::create_rand_engine();
+    std::uniform_real_distribution<double> prob(0, 1);
+    std::uniform_real_distribution<double> kh_sample(env_.kh_range_[0], env_.kh_range_[1]);
+    std::uniform_real_distribution<double> kp_sample(env_.kp_range_[0], env_.kp_range_[1]);
 
     // Selection Strength
-    int Cs = env_.C * (1.0 - env_.S);
+    int Cs = env_.C_ * (1.0 - env_.S_);
 
     // Replication & Runge-Kutta system
-    Replication rep(act_, env_.N, env_.L);
-    runge_kutta4<Lives> RK4;
+    runge_kutta4<VectorXd> RK4;
+
+    // Priority of Mutation
+    // Host = 1, Parasite = 2
+    int priority_mut = 1;
 
     // Main loop
-    for (int rd=0; rd<env_.R; rd++) {
-        std::cout << "Process " << id_ << " Round " << rd+1 << std::endl;
+    for (int rd=0; rd<env_.R_; rd++) {
+        std::cout << "Round " << rd+1 << std::endl;
         
         // Selection
-        vector<int> killed;
-        killed = PDS::selection_mapper(env_.C, Cs, engine);
-        for (int k : killed) { for (int l=0; l<env_.L; l++) {
-            lives[k][l] = 0.0;
-        } }
+        vector<int> killed = PDS::selection_mapper(env_.C_, Cs);
+        for (int k : killed) { lives.update(k, 0.0); }
+        std::cout << "Selection DONE. " << rd+1 << std::endl;
 
         // Fusion-Division
         vector<vector<int>> fusdived;
-        fusdived = PDS::fusdiv_mapper(env_.C, env_.FD, engine);
+        fusdived = PDS::fusdiv_mapper(env_.C_, env_.FD_);
         for (vector<int> fd : fusdived) {
-            vector<int> fused = PDS::sum_2vecs_int(
-                lives[fd[0]], lives[fd[1]], env_.L
-            );
+            VectorXi fused(env_.L_); fused = lives.fuse(fd[0], fd[1]);
             // detection empty fusion
-            for (int l=0; l<env_.L; l++) {
+            for (int l=0; l<env_.L_; l++) {
                 if (fused[l] > 0.0) {
                     std::binomial_distribution<> binomial((int)fused[l], 0.5);
-                    int oneside = binomial(engine);
+                    double oneside = binomial(engine);
                     
-                    lives[fd[0]][l] = (double)oneside;
-                    lives[fd[1]][l] = (double)(fused[l] - oneside);
+                    lives.update(fd[0], l, oneside);
+                    lives.update(fd[1], l, fused[l]-oneside);
                 }
             }
         } // Fusion-Division
+        std::cout << "Fusion-Division DONE." << rd+1 << std::endl;
 
+        // Decting Extinction
+        VectorXd sum_line = lives.sum_lineage();
+        for (int l=0; l<env_.L_; l++) {
+            if (sum_line[l] <= 0.0 & lineages[l] != 0) {
+                // Updating labels
+                lineages.update_none(l);
+                // Updating activity
+                acts.zero(l);
+            }
+        }
+        std::cout << "Extinction Detection DONE." << rd+1 << std::endl;
 
-        // Replication
+        //##### Replication #####//
+        vector<int> index_host = lineages.index_hosts();
+        vector<int> index_para = lineages.index_para();
+        vector<int> dev_hosts(env_.C_, 0), dev_paras(env_.C_, 0);
+        Replication rep(acts, env_.N_, env_.L_);
         #pragma omp parallel for
-        for (int c=0; c<env_.C; c++) {
-            double sum = PDS::sum(lives[c], env_.L);
-            // detecting host
-            int flag_host = 0;
-            for (int i : env_.index_host) {
-                if (lives[c][i] > 0) {flag_host += 1;}
-            }
-            if (sum > 0 & sum < env_.N & flag_host > 0) {
-                Lives clives = replication(lives[c], act_, env_.N, env_.L);
-                boost::numeric::odeint::integrate_const(
-                    RK4, rep, clives, 0.0, 15.0, 0.01
-                );
-                lives[c] = clives;
-        }   } // Replication
+        for (int c=0; c<env_.C_; c++) {
 
-        // recording conc
-        rec.record(lives);
-
-        // If Hosts extinct, process is broken.
-        Lives sum_line = PDS::sum_lineage(lives, env_.C, env_.L);
+        // ### Main Process of Rep ### ///
+        double sum_lives = lives.sum_compartment(c);
+        // detecting host
         int flag_host = 0;
-        for (int i : env_.index_host) {
-            if (sum_line[i] > 0) {flag_host += 1;}
-        }
-        if (flag_host < host_num) {
-            std::cout << "Extinction " << id_ << std::endl;
-            return 0;
-        }
+        if (0 < sum_lives & sum_lives < env_.N_ & lives.exist(c, index_host)) {
+            // Getting initical concs
+            dev_hosts[c] = int(lives.sum(c, index_host));
+            dev_paras[c] = int(lives.sum(c, index_para));
+            // Main development
+            VectorXd clives = lives.values(c);
+            boost::numeric::odeint::integrate_const(
+                RK4, rep, clives, 0.0, 15.0, 0.01
+            );
+            lives.update(c, clives);
+            // Count replication
+            dev_hosts[c] = int(lives.sum(c, index_host)) - dev_hosts[c];
+            dev_paras[c] = int(lives.sum(c, index_para)) - dev_paras[c];
+        // ### Main Process of Rep; END ### ///
+
+        } } // Replication
+        std::cout << "Replication DONE." << rd+1 << std::endl;
+
+        //##### Mutation #####//
+        // Mutation priority
+        if (prob(engine) < env_.mhh_/(env_.mhh_+env_.mhp_+env_.mpp_))
+            { priority_mut = 1; } else { priority_mut = 2; }
         
-    } // Main loop
+        vector<int> compartment_dev_host = PDS::where_more(dev_hosts, 0.0);
+        vector<int> compartment_dev_para = PDS::where_more(dev_paras, 0.0);
+        bool flag_host_mut = false, flag_para_mut = false;
+        int index_host_mut = -1, index_para_mut = -1;
+        if (lineages.detect_none()){
 
-    std::cout << "Survival " << id_ << std::endl;
-    return 1;
-}
+        // ### Mutation by Replication ### ///
+        vector<int> index_none = lineages.index_nones();
+        if (priority_mut == 1) {
+        // ## Generation Priority: Parasite < Host ## //
+        // Host to Host
+        for (int c : compartment_dev_host) {
+            if (dev_hosts[c] * env_.mhh_ >= prob(engine)) {
+                lives.update(c, index_none[0], 1.0);
+                if (!flag_host_mut){
+                    flag_host_mut = true;
+                    index_host_mut = index_none[0];
+                    // Updating label
+                    lineages.update_host(index_host_mut);
+                }
+        } }
 
-void World::save_env() {
-    /// save path
-    std::string results, ext;
-    results = string("./results/env/"); ext = string(".json");
-    string path = results + id_ + ext;
-    
-    /// constructing config
-    ptree config;
-    config.put("Env.Round", env_.R);
-    config.put("Env.Compartment", env_.C);
-    config.put("Env.Selection", env_.S);
-    config.put("Env.Fusion_Division", env_.FD);
-    config.put("Env.Capacity", env_.N);
-    config.put("Env.Lineage", env_.L);
-    // initial conc
-    ptree iconc;
-    for (int l=0; l<env_.L; l++) {
-        string index = std::to_string(l+1);
-        iconc.put(index, env_.init_lives[l]);
-    }
-    config.add_child("Env.Init_Lives", iconc);
+        // If host mutated and lineage are vacant, para can mutate.
+        if (flag_host_mut && index_none.size() >= 2) { index_para_mut = index_none[1]; }
+        else if (flag_host_mut && index_none.size() < 2) { continue; }
+        else if (!flag_host_mut) { index_para_mut = index_none[0]; }
+        else { continue; }
 
-    /// Writing
-    write_json(path, config);
-}
+        // Host to Parasite
+        for (int c : compartment_dev_host) {
 
-void World::save_act() {
-    std::cout << "Activity saver " << id_ << std::endl;
-    // Saver
-    std::ofstream writing_file;
-    std::string filename = "./results/act/" + id_ + ".csv";
-    writing_file.open(filename, std::ios::out);
-
-    // Main
-    for (int l1=0; l1<env_.L; l1++) { 
-    for (int l2=0; l2<env_.L; l2++) {
-        if (l1 == env_.L-1) {
-            if (l2 == env_.L-1) {
-                writing_file << act_[l1][l2] << std::endl;
-            } else {
-                writing_file << act_[l1][l2] << ",";
+            if (dev_hosts[c] * env_.mhp_ >= prob(engine)) {
+                lives.update(c, index_para_mut, 1.0);
+                if (!flag_para_mut) {
+                    flag_para_mut = true;
+                    lineages.update_parasite(index_para_mut);
+                }
             }
-        } else {
-            writing_file << act_[l1][l2] << ",";
         }
-    } }
-    writing_file.close();
-    std::cout << "Activity save DONE " << id_ << std::endl;
-}
+        // Parasite to Parasite
+        for (int c : compartment_dev_para) {
+            if (dev_paras[c] * env_.mpp_ >= prob(engine)) {
+                lives.update(c, index_para_mut, 1.0);
+                if (!flag_para_mut) {
+                    flag_para_mut = true;
+                    lineages.update_parasite(index_para_mut);
+                } 
+            }
+        } } else if (priority_mut == 2) {
+        // ## Generation Priority: Parasite > Host ## //
+        // Host to Parasite
+        for (int c : compartment_dev_host) {
+            if (dev_hosts[c] * env_.mhp_ >= prob(engine)) {
+                lives.update(c, index_none[0], 1.0);
+                if (!flag_para_mut) {
+                    flag_para_mut = true;
+                    index_host_mut = index_none[0];
+                    // Updating label
+                    lineages.update_host(index_host_mut);
+                }
+            }
+        }
+        // Parasite to Parasite
+        for (int c : compartment_dev_para) {
+            if (dev_paras[c] * env_.mpp_ >= prob(engine)) {
+                lives.update(c, index_none[0], 1.0);
+                if (!flag_para_mut) {
+                    flag_para_mut = true;
+                    index_host_mut = index_none[0];
+                    // Updating label
+                    lineages.update_host(index_host_mut);
+                }
+            }
+        }
+
+        // If host mutated and lineage are vacant, para can mutate.
+        if (flag_para_mut && index_none.size() >= 2) { index_host_mut = index_none[1]; }
+        else if (flag_para_mut && index_none.size() < 2) { continue; }
+        else if (!flag_para_mut) { index_host_mut = index_none[0]; }
+        else { continue; }
+
+        // Host to Host
+        for (int c : compartment_dev_host) {
+            if (dev_hosts[c] * env_.mhh_ >= prob(engine)) {
+                lives.update(c, index_host_mut, 1.0);
+                if (!flag_host_mut) {
+                    flag_host_mut = true;
+                    // Updating label
+                    lineages.update_host(index_host_mut);
+                }
+            }
+        }  
+
+        } 
+        // ### Mutation by Replication; END ### //
+        std::cout << "Mutation DONE." << rd+1 << std::endl;
+
+        }
+
+        // ### Updating activity ### //
+        // Parasite activity    
+        if (flag_para_mut) {
+            for (int l=0; l<env_.L_; l++) {
+                // Parasite replicated
+                double d1 = PDS::activity_sampler(
+                    kh_sample, kp_sample,
+                    lineages[index_para_mut], lineages[l]
+                );
+                acts.update(index_para_mut, l, d1);
+
+                // Parasite replicating
+                double d2 = PDS::activity_sampler(
+                    kh_sample, kp_sample,
+                    lineages[l], lineages[index_para_mut]
+                );
+                acts.update(l, index_para_mut, d2);
+            }
+        }
+        // Host activity
+        if (flag_host_mut) {
+            for (int l=0; l<env_.L_; l++) {
+                // Host replicated
+                double d1 = PDS::activity_sampler(
+                    kh_sample, kp_sample,
+                    lineages[index_host_mut], lineages[l]
+                );
+                acts.update(index_host_mut, l, d1);
+                // Host replicating
+                double d2 = PDS::activity_sampler(
+                    kh_sample, kp_sample,
+                    lineages[l], lineages[index_host_mut]
+                );
+                acts.update(l, index_host_mut, d2);
+            }
+        }
+        // ### Updating activity; END ### //
+        std::cout << "Updating Activity DONE." << rd+1 << std::endl;
+
+        // saving initial condition
+        lives.save(&live_ofs); acts.save(&acts_ofs); lives.save(&live_ofs);
+
+        // Display
+
+        // If All Hosts extinct, process is broken.
+        if (!lineages.detect_host()) {
+            lives.save(&live_ofs); acts.save(&acts_ofs); lives.save(&live_ofs);
+            return 0;        
+        }
+    }
+    lives.save(&live_ofs); acts.save(&acts_ofs); lives.save(&live_ofs);
+    return 1;
+} // All hosts extinction: 0, al least one host lineage survival: 1
 
 
 #endif  // WORLD_HPP_

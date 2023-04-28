@@ -17,6 +17,7 @@ std::mt19937 create_rand_engine(){
     std::vector<std::uint_least32_t> v(10);// 初期化用ベクタ
     std::generate(v.begin(), v.end(), std::ref(rnd));// ベクタの初期化
     std::seed_seq seed(v.begin(), v.end());
+
     return std::mt19937(seed);// 乱数エンジン
 }
 
@@ -29,6 +30,7 @@ std::vector<int> make_rand_array(const size_t size, int rand_min, int rand_max) 
     auto engine = create_rand_engine();
     std::uniform_int_distribution<int> distribution(rand_min, rand_max);
     while (tmp.size() < size) tmp.insert(distribution(engine));
+
     return std::vector<int>(tmp.begin(), tmp.end());
 }
 

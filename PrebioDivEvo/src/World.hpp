@@ -26,7 +26,6 @@ int World::chronicle() {
     // lives setting
     Live lives(env_.C_, env_.L_);
     lives.filled(env_.init_live_);
-    std::cout << lives.values(0) << std::endl;
     // act matrix setting
     Act acts(env_.L_);
     acts.update(env_.init_act_);
@@ -71,8 +70,7 @@ int World::chronicle() {
         vector<vector<int>> fusdived;
         fusdived = PDS::fusdiv_mapper(env_.C_, env_.FD_);
         for (vector<int> fd : fusdived) {
-            VectorXd fused(env_.L_); fused = lives.fuse(fd[0], fd[1]);
-            std::cout << "Fusion-Division DONE." << rd+1 << std::endl;
+            VectorXi fused(env_.L_); fused = lives.fuse(fd[0], fd[1]);
             // detection empty fusion
             for (int l=0; l<env_.L_; l++) {
                 if (fused[l] > 0.0) {

@@ -31,9 +31,9 @@ class Live {
     int lineage_size_;
 
 public:
-    Live(int c, int l);
+    Live(int, int);
     double value(int i, int j) { return values_[i](j); }
-    VectorXd values(int i) { return values_[i]; }
+    VectorXd values(int i) { return values_[i]; };
     void filled(double);
     void filled(vector<double>);
     void update(int i, int j, double v) { values_[i](j) = v; }
@@ -46,13 +46,14 @@ public:
     double sum_compartment(int i) { return values_[i].sum(); };
     bool exist(int, vector<int>);
     void display_lineage();
-    inline VectorXd fuse(int, int);
+    VectorXi fuse(int, int);
 };
 
 Live::Live(int c, int l) {
-    for (int i=0; i<comp_size_; i++) {
-        VectorXd v(lineage_size_); v.setZero();
-        values_.push_back(v);
+    comp_size_ = c; lineage_size_ = l;
+    VectorXd vec(lineage_size_); vec.setZero();
+    for (int i=0; i<c; i++) {
+        values_.push_back(vec);
     }
 }
 
@@ -62,9 +63,9 @@ void Live::filled(double v) {
     }}
 }
 
-void Live::filled(vector<double> v) {
+void Live::filled(vector<double> vec) {
     for (int i=0; i<comp_size_; i++) { for (int j=0; j<lineage_size_; j++) {
-        values_[i](j) = v[j];
+        values_[i](j) = vec[j];
     }}
 }
 
@@ -121,11 +122,9 @@ void Live::display_lineage() {
     }
 }
 
-inline VectorXd Live::fuse(int i, int j) {
-    std::cout << i << " " << j << std::endl;
-    VectorXd v = VectorXd::Constant(lineage_size_, 0.0);
-    std::cout << v << std::endl;
-    return v;
+inline VectorXi Live::fuse(int i, int j) {
+    VectorXi vec = (values_[i]+values_[j]).cast <int> ();
+    return vec;
 };
 
 
