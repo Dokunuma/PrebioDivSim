@@ -12,8 +12,12 @@
 #include <vector>
 #include <string>
 #include <cassert>
-#include <Eigen/Dense>
 #include <nlohmann/json.hpp>
+
+#include <boost/numeric/odeint/algebra/algebra_dispatcher.hpp>
+#include <boost/numeric/odeint/algebra/vector_space_algebra.hpp>
+#include <boost/numeric/odeint/external/eigen/eigen.hpp>
+#include <Eigen/Dense>
 
 using std::ofstream;
 using std::array;
@@ -45,6 +49,7 @@ public:
     double sum(int, vector<int>);
     double sum_compartment(int i) { return values_[i].sum(); };
     bool exist(int, vector<int>);
+    bool exist(vector<int>);
     void display_lineage();
     VectorXi fuse(int, int);
 };
@@ -114,6 +119,13 @@ inline bool Live::exist(int c, vector<int> index) {
     return false;
 }
 
+inline bool Live::exist(vector<int> index) {
+    VectorXd vec(lineage_size_); vec.setZero();
+    vec = sum_lineage();
+    for (int i : index) { if (vec(i) > 0.0) { return true; } }
+    return false;
+}
+
 void Live::display_lineage() {
     VectorXd l = sum_lineage();
     for (int i=0; i<lineage_size_; i++){
@@ -135,7 +147,7 @@ class Act {
 public:
     Act(int n) {values_.resize(n, n); size_=n; initilized();}
     void initilized();
-    MatrixXd values() {return values_;}
+    MatrixXd values() { return values_; }
     void update(int i, int j, double v) {values_(i, j) = v;}
     void update(MatrixXd);
     void save(ofstream *ofs);
@@ -171,97 +183,21 @@ void Act::zero(int l) {
 }
 
 
-class LineageLabel {
-    // None = 0, Host = 1, Parasite = 2
-    vector<int> values_;
-    int size_;
-
-public:
-    LineageLabel(int s) {values_.reserve(s); size_ = s;};
-    int operator[](int i) {return values_[i];}
-    int size() {return size_;}
-    void update(vector<int> v) {values_ = v;}
-    void update_none(int i) {values_[i] = 0;}
-    void update_host(int i) {values_[i] = 1;}
-    void update_parasite(int i) {values_[i] = 2;}
-    void update_para(int i) {update_parasite(i);}
-    bool detect_none();
-    bool detect_host();
-    bool detect_parasite();
-    bool detect_para() { return detect_parasite(); }
-    vector<int> index_nones();
-    vector<int> index_hosts();
-    vector<int> index_parasites();
-    vector<int> index_para() {return index_parasites();}
-    void save(ofstream *ofs);
-};
-
-inline bool LineageLabel::detect_none() {
-    for (int v : values_) { if (v == 0) {return true;} }
-    return false;
-}
-
-inline bool LineageLabel::detect_host() {
-    for (int v : values_) { if (v == 1) {return true;} }
-    return false;
-}
-
-inline bool LineageLabel::detect_parasite() {
-    for (int v : values_) { if (v == 2) {return true;} }
-    return false;
-}
-
-inline vector<int> LineageLabel::index_nones() {
-    vector<int> index = {};
-    for (int i=0; i<size_; i++) {
-        if (values_[i] == 0) {index.push_back(i);}
-    }
-    return index;
-}
-
-inline vector<int> LineageLabel::index_hosts() {
-    vector<int> index = {};
-    for (int i=0; i<size_; i++) {
-        if (values_[i] == 1) {index.push_back(i);}
-    }
-    return index;
-}
-
-inline vector<int> LineageLabel::index_parasites() {
-    vector<int> index = {};
-    for (int i=0; i<size_; i++) {
-        if (values_[i] == 2) {index.push_back(i);}
-    }
-    return index;
-}
-
-inline void LineageLabel::save(ofstream *ofs) {
-    for (int i=0; i<size_; i++) {
-        if (i < size_-1) { *ofs << values_[i] << ","; }
-        else { *ofs << values_[i] << std::endl; }
-    }
-}
-
-
 class Env {
 public:
     int R_, C_, FD_, L_; double S_, N_; 
-    vector<double> init_live_;
-    MatrixXd init_act_; vector<int> init_lineage_;
-    array<double, 2> kh_range_, kp_range_;
-    double mhh_, mpp_, mhp_;
+    vector<double> init_live_; vector<int> host_index_;
     string id_;
 
 public:
     Env(
         int r, int c, double s, int fd, double n, int l,
-        vector<double> init_live, MatrixXd init_act, vector<int> init_lineage,
-        array<double, 2> kh, array<double, 2> kp,
-        double mhh, double mpp, double mhp, string id
+        vector<double> init_live, vector<int> host_index,
+        string id
     ):
         R_(r), C_(c), S_(s), FD_(fd), N_(n), L_(l), 
-        init_live_(init_live), init_act_(init_act), init_lineage_(init_lineage),
-        kh_range_(kh), kp_range_(kp), mhh_(mhh_), mpp_(mpp), mhp_(mhp), id_(id) {};
+        init_live_(init_live), host_index_(host_index),
+        id_(id) {};
     void save();
 };
 
@@ -270,8 +206,6 @@ void Env::save() {
 
     j["round"] = R_; j["compartment"] = C_; j["fusdiv"] = FD_; j["lineage"] = L_;
     j["selection"] = S_; j["nutrient"] = N_;
-    j["kh"] = kh_range_;j["kp"] = kp_range_;
-    j["h_to_h"] = mhh_; j["p_to_p"] = mpp_; j["h_to_p"] = mhp_;
     j["ID"] = id_;
 
     string dir;

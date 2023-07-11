@@ -12,7 +12,8 @@ public:
         // density effect term
         double capa = 1.0 - (x.sum()/N);
         // interaction and development
-        VectorXd inter = act.values()*x;
+        VectorXd inter(L); inter.setZero();
+        inter = act.values()*x;
         dx = inter * capa;
     }
 }; // class Replication
