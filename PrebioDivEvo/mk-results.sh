@@ -1,2 +1,2 @@
 mkdir results
-mkdir results/pop results/env results/act results/labels
+mkdir results/pops results/envs results/acts results/lins

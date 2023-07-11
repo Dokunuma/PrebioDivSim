@@ -8,16 +8,13 @@ public:
     Act act; double N; int L;
 public:
     Replication(Act a, double n, int l): act(a), N(n), L(l) {}
-    void operator()(const Lives& x, Lives& dx, double t) {
+    void operator()(const VectorXd& x, VectorXd& dx, double t) {
         // density effect term
-        double capa = 1.0 - (PDS::sum(x, L)/N);
+        double capa = 1.0 - (x.sum()/N);
         // interaction and development
-        for (int i=0; i<L; i++) { double inter = 0.0;
-            for (int j=0; j<L; j++) {
-                inter += act[i][j] * x[j];
-            }
-            dx[i] = x[i] * inter * capa;
-    } }
+        VectorXd inter = act.values()*x;
+        dx = inter * capa;
+    }
 }; // class Replication
 
 #endif  // REP_HPP_
